@@ -2,7 +2,7 @@
 
 Cadastro interno das lojas. Esta pasta é um repositório separado do ERP.
 
-Banco, SMTP e tokens Focus já preenchidos no `.env` de cada loja são lidos para a ficha. O arquivo `src/private-env.ts` fica de fora do git.
+Banco, SMTP e tokens Focus já preenchidos no `.env` de cada loja são lidos para a ficha neste computador. O arquivo `src/private-env.ts` fica de fora do git, então a build da Vercel sobe sem essas senhas.
 
 | Loja | Pasta | Status inicial |
 |---|---|---|

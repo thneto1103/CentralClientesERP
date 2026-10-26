@@ -1,6 +1,12 @@
-import { PRIVATE_ENV } from "./private-env";
 import { SEED } from "./seed";
-import { EMPTY_SECRETS, type BoardState, type CalendarDate, type ClientRecord, type ClientSecrets, type HistoryEvent } from "./types";
+import { EMPTY_SECRETS, type BoardState, type CalendarDate, type ClientRecord, type ClientSecrets, type EnvSnapshot, type HistoryEvent } from "./types";
+
+const loadedEnv = import.meta.glob("./private-env.ts", {
+  eager: true,
+  import: "PRIVATE_ENV",
+}) as Record<string, Record<string, EnvSnapshot>>;
+
+const PRIVATE_ENV: Record<string, EnvSnapshot> = Object.values(loadedEnv)[0] ?? {};
 
 const KEY = "central-clientes.v1";
 
