@@ -84,9 +84,15 @@ function applyEnv(client: ClientRecord): ClientRecord {
   };
 }
 
-function merge(saved: BoardState): BoardState {
+export function withSeed(saved: BoardState): BoardState {
   const bySlug = new Map(saved.clients.map((client) => [client.slug, client]));
-  const clients = cloneSeed().map((seed) => applyEnv(complete(bySlug.get(seed.slug) ?? seed)));
+  const clients = cloneSeed().map((seed) => {
+    const remote = bySlug.get(seed.slug);
+    const base = remote
+      ? { ...seed, ...remote, checklist: remote.checklist.length ? remote.checklist : seed.checklist }
+      : seed;
+    return applyEnv(complete(base));
+  });
   for (const extra of saved.clients) {
     if (!clients.some((client) => client.slug === extra.slug)) clients.push(applyEnv(complete(extra)));
   }
@@ -101,7 +107,7 @@ export function loadBoard(): BoardState {
   const raw = localStorage.getItem(KEY);
   if (!raw) return { clients: cloneSeed().map(applyEnv), events: [], dates: [] };
   try {
-    return merge(JSON.parse(raw) as BoardState);
+    return withSeed(JSON.parse(raw) as BoardState);
   } catch {
     return { clients: cloneSeed().map(applyEnv), events: [], dates: [] };
   }

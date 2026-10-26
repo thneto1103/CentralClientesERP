@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Agenda } from "./Agenda";
 import { bridgePost, bridgeStatus, deployBody, isKnownStore } from "./deploy";
 import { Dossier } from "./Dossier";
+import { Login } from "./Login";
 import { slugify } from "./month";
+import { loadRemote, pushBoard } from "./remote";
 import { blankChecklist } from "./seed";
 import { loadBoard, newDate, newEvent, saveBoard } from "./store";
+import { supabase } from "./supabaseClient";
 import {
   STATUSES,
   STATUS_LABEL,
@@ -23,10 +26,89 @@ export function App() {
   const [creating, setCreating] = useState(false);
   const [deployMessage, setDeployMessage] = useState("");
   const [packageState, setPackageState] = useState({ zipExists: false, exeExists: false, folderExists: false });
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(supabase === null);
+  const [boardReady, setBoardReady] = useState(supabase === null);
+  const [syncMessage, setSyncMessage] = useState("");
+  const skipSave = useRef(true);
+  const pushedAt = useRef(0);
 
   useEffect(() => {
-    saveBoard(board);
-  }, [board]);
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionEmail(session?.user.email ?? null);
+      setAuthReady(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !sessionEmail) return;
+    let cancel = false;
+    void loadRemote().then((result) => {
+      if (cancel) return;
+      if (!result.board) {
+        setSyncMessage(result.error || "Não foi possível ler a ficha.");
+        return;
+      }
+      skipSave.current = true;
+      pushedAt.current = Date.now();
+      setBoard(result.board);
+      setBoardReady(true);
+      setSyncMessage("");
+      void pushBoard(result.board).then((message) => {
+        if (!cancel && message) setSyncMessage(message);
+      });
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [sessionEmail]);
+
+  useEffect(() => {
+    if (!supabase || !sessionEmail || !boardReady) return;
+    const client = supabase;
+    const pull = () => {
+      if (Date.now() - pushedAt.current < 1500) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
+      void loadRemote().then((result) => {
+        if (!result.board) return;
+        skipSave.current = true;
+        setBoard(result.board);
+      });
+    };
+    const channel = client
+      .channel("central-board")
+      .on("postgres_changes", { event: "*", schema: "public", table: "clients" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_dates" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_events" }, pull)
+      .subscribe();
+    window.addEventListener("focus", pull);
+    return () => {
+      window.removeEventListener("focus", pull);
+      void client.removeChannel(channel);
+    };
+  }, [sessionEmail, boardReady]);
+
+  useEffect(() => {
+    if (!boardReady) return;
+    if (skipSave.current) {
+      skipSave.current = false;
+      return;
+    }
+    if (!supabase) {
+      saveBoard(board);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      pushedAt.current = Date.now();
+      void pushBoard(board).then((message) => {
+        if (message) setSyncMessage(message);
+      });
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [board, boardReady]);
 
   useEffect(() => {
     if (!selected) return;
@@ -199,6 +281,28 @@ export function App() {
     }));
   }
 
+  if (supabase && !authReady) {
+    return <p className="login hint">Conferindo a sessão…</p>;
+  }
+  if (supabase && !sessionEmail) {
+    return (
+      <div className="app">
+        <header className="top">
+          <p className="eyebrow">Sócios</p>
+          <h1>Central de clientes</h1>
+        </header>
+        <Login />
+      </div>
+    );
+  }
+  if (supabase && !boardReady) {
+    return (
+      <div className="app">
+        <p className={syncMessage ? "warn login" : "login hint"}>{syncMessage || "Carregando a ficha…"}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <header className="top">
@@ -213,10 +317,18 @@ export function App() {
           <button type="button" className={view === "agenda" ? "choice on" : "choice"} data-testid="nav-agenda" onClick={() => setView("agenda")}>
             Agenda
           </button>
+          {supabase ? (
+            <button type="button" className="choice" data-testid="sign-out" onClick={() => { if (supabase) void supabase.auth.signOut(); }}>
+              Sair
+            </button>
+          ) : null}
         </nav>
         <p className="banner">
-          Banco, SMTP e tokens Focus que já estavam no .env de cada loja aparecem na ficha. Senha da conta Focus, certificado e acesso remoto não estão nesses arquivos.
+          {supabase
+            ? `Ligado à Central${sessionEmail ? ` como ${sessionEmail}` : ""}. Os dois sócios veem a mesma ficha.`
+            : "Esta cópia fica só neste navegador. Para os dois sócios verem a mesma ficha, faltam as chaves do Supabase da Central."}
         </p>
+        {syncMessage ? <p className="warn">{syncMessage}</p> : null}
       </header>
 
       {view === "agenda" ? (

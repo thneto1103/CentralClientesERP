@@ -11,7 +11,9 @@ Banco, SMTP e tokens Focus já preenchidos no `.env` de cada loja são lidos par
 | Tabacaju | `ERPOnlyPy-ylcfqm` | Em andamento |
 | ELO | `ERPOnlyPy-Elo` | Não iniciado |
 
-Senhas, tokens Focus e o arquivo do certificado não são copiados para cá. O status fica no navegador (`localStorage`) até existir o projeto Supabase da Central.
+Sem `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`, a ficha fica neste navegador. Com as duas variáveis, os sócios entram com e-mail e senha e veem a mesma ficha. A chave `service_role` não entra no site.
+
+No projeto Supabase novo da Central (não no banco de uma loja), rode `supabase/migrations/20261016000000_clients.sql` no SQL Editor. Em Authentication, deixe o e-mail ligado, desligue o cadastro público e crie os dois usuários. Em Vercel, grave as duas variáveis em Production e faça um Redeploy.
 
 ```powershell
 npm install

@@ -292,6 +292,14 @@ h3 { font-size: 1.05rem; margin: 22px 0 8px; }
   .chip:active, .choice:active, .check:active, .card:active, .back:active { transform: none; }
 }
 
+.login {
+  max-width: 420px;
+  margin: 48px auto;
+  display: grid;
+  gap: 12px;
+  padding: 0 var(--pad);
+}
+
 @media (max-width: 800px) {
   .desk { grid-template-columns: 1fr; }
   .desk.has-detail .list { display: none; }
