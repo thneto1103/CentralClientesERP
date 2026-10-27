@@ -119,12 +119,43 @@ export type HistoryEvent = {
   at: string;
   slug: string;
   text: string;
+  actorEmail: string;
+};
+
+export type Role = "socio" | "vendedor";
+
+export type Profile = {
+  userId: string;
+  email: string;
+  role: Role;
+};
+
+export type ClientGrant = {
+  userId: string;
+  clientSlug: string;
+};
+
+export type ClientContact = {
+  id: string;
+  clientSlug: string;
+  name: string;
+  phone: string;
+  roleLabel: string;
+};
+
+export type ClientFile = {
+  id: string;
+  clientSlug: string;
+  storagePath: string;
+  fileName: string;
 };
 
 export type BoardState = {
   clients: ClientRecord[];
   events: HistoryEvent[];
   dates: CalendarDate[];
+  contacts: ClientContact[];
+  files: ClientFile[];
 };
 
 export const STATUS_LABEL: Record<ProjectStatus, string> = {

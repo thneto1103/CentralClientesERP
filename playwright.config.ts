@@ -14,6 +14,10 @@ export default defineConfig({
     url: "http://127.0.0.1:5173",
     reuseExistingServer: false,
     timeout: 120000,
+    env: {
+      VITE_SUPABASE_URL: " ",
+      VITE_SUPABASE_ANON_KEY: " ",
+    },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

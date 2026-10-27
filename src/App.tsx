@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { allowedClients } from "./access";
 import { Agenda } from "./Agenda";
 import { bridgePost, bridgeStatus, deployBody, isKnownStore } from "./deploy";
 import { Dossier } from "./Dossier";
 import { Login } from "./Login";
 import { slugify } from "./month";
-import { loadRemote, pushBoard } from "./remote";
+import { Permissions } from "./Permissions";
+import { loadRemote, pushBoard, type SessionAccess } from "./remote";
 import { blankChecklist } from "./seed";
-import { loadBoard, newDate, newEvent, saveBoard } from "./store";
+import { loadBoard, newContact, newDate, newEvent, saveBoard } from "./store";
 import { supabase } from "./supabaseClient";
 import {
   STATUSES,
@@ -14,13 +16,17 @@ import {
   type BoardState,
   type CalendarDate,
   type CheckKey,
+  type ClientFile,
   type ClientRecord,
   type ProjectStatus,
+  type Role,
 } from "./types";
+import { Users } from "./Users";
 
 export function App() {
   const [board, setBoard] = useState<BoardState>(() => loadBoard());
-  const [view, setView] = useState<"clientes" | "agenda">("clientes");
+  const [view, setView] = useState<"clientes" | "agenda" | "usuarios" | "permissoes">("clientes");
+  const [access, setAccess] = useState<SessionAccess | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState<ProjectStatus | "todos">("todos");
   const [creating, setCreating] = useState(false);
@@ -47,14 +53,19 @@ export function App() {
     let cancel = false;
     void loadRemote().then((result) => {
       if (cancel) return;
-      if (!result.board) {
-        setSyncMessage(result.error || "Não foi possível ler a ficha.");
+      if (!result.board || !result.access) {
+        setSyncMessage(result.error || "Não foi possível ler a ficha. Rode o SQL de acessos na Central.");
         return;
       }
       skipSave.current = true;
       pushedAt.current = Date.now();
+      setAccess(result.access);
       setBoard(result.board);
       setBoardReady(true);
+      if (!result.access.role) {
+        setSyncMessage("Esta conta ainda não tem nível. Peça a um sócio.");
+        return;
+      }
       setSyncMessage("");
       void pushBoard(result.board).then((message) => {
         if (!cancel && message) setSyncMessage(message);
@@ -73,8 +84,9 @@ export function App() {
       const active = document.activeElement;
       if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return;
       void loadRemote().then((result) => {
-        if (!result.board) return;
+        if (!result.board || !result.access) return;
         skipSave.current = true;
+        setAccess(result.access);
         setBoard(result.board);
       });
     };
@@ -83,6 +95,9 @@ export function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "clients" }, pull)
       .on("postgres_changes", { event: "*", schema: "public", table: "client_dates" }, pull)
       .on("postgres_changes", { event: "*", schema: "public", table: "client_events" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_contacts" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_files" }, pull)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_grants" }, pull)
       .subscribe();
     window.addEventListener("focus", pull);
     return () => {
@@ -101,6 +116,7 @@ export function App() {
       saveBoard(board);
       return;
     }
+    if (!access?.role) return;
     const handle = window.setTimeout(() => {
       pushedAt.current = Date.now();
       void pushBoard(board).then((message) => {
@@ -108,7 +124,7 @@ export function App() {
       });
     }, 400);
     return () => window.clearTimeout(handle);
-  }, [board, boardReady]);
+  }, [board, boardReady, access]);
 
   useEffect(() => {
     if (!selected) return;
@@ -121,12 +137,19 @@ export function App() {
     };
   }, [selected, deployMessage]);
 
-  const visible = useMemo(
-    () => board.clients.filter((client) => filter === "todos" || client.status === filter),
-    [board.clients, filter],
+  const allowed = useMemo(
+    () => allowedClients(board.clients, access, supabase !== null),
+    [board.clients, access],
   );
-  const current = board.clients.find((client) => client.slug === selected) ?? null;
+  const visible = useMemo(
+    () => allowed.filter((client) => filter === "todos" || client.status === filter),
+    [allowed, filter],
+  );
+  const current = allowed.find((client) => client.slug === selected) ?? null;
   const history = board.events.filter((event) => event.slug === current?.slug);
+  const contacts = board.contacts.filter((contact) => contact.clientSlug === current?.slug);
+  const files = board.files.filter((file) => file.clientSlug === current?.slug);
+  const agendaDates = board.dates.filter((date) => allowed.some((client) => client.slug === date.clientSlug));
 
   function patchClient(slug: string, patch: Partial<ClientRecord>, label: string) {
     setBoard((prev) => ({
@@ -210,6 +233,9 @@ export function App() {
       clients: [...prev.clients, client],
       events: [newEvent(slug, "Cliente criado"), ...prev.events],
     }));
+    if (access?.role === "vendedor") {
+      setAccess((prev) => (prev ? { ...prev, grants: [...prev.grants, { userId: prev.userId, clientSlug: slug }] } : prev));
+    }
     setCreating(false);
     setSelected(slug);
     setView("clientes");
@@ -271,6 +297,98 @@ export function App() {
     }));
   }
 
+  function addContact(input: { name: string; phone: string; roleLabel: string }) {
+    if (!current) return;
+    const contact = newContact({ ...input, clientSlug: current.slug });
+    setBoard((prev) => ({
+      ...prev,
+      contacts: [...prev.contacts, contact],
+      events: [newEvent(current.slug, `Contato adicionado: ${contact.name}`), ...prev.events],
+    }));
+  }
+
+  function removeContact(id: string) {
+    const contact = board.contacts.find((item) => item.id === id);
+    if (!contact) return;
+    setBoard((prev) => ({
+      ...prev,
+      contacts: prev.contacts.filter((item) => item.id !== id),
+      events: [newEvent(contact.clientSlug, `Contato removido: ${contact.name}`), ...prev.events],
+    }));
+  }
+
+  async function addFile(file: File) {
+    if (!supabase || !current) return;
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^\.+/, "").slice(0, 80) || "arquivo";
+    const id = crypto.randomUUID();
+    const path = `${current.slug}/${id}-${safe}`;
+    const uploaded = await supabase.storage.from("client-files").upload(path, file, { upsert: false });
+    if (uploaded.error) {
+      setSyncMessage(uploaded.error.message);
+      return;
+    }
+    setBoard((prev) => ({
+      ...prev,
+      files: [...prev.files, { id, clientSlug: current.slug, storagePath: path, fileName: file.name }],
+      events: [newEvent(current.slug, `Anexo adicionado: ${file.name}`), ...prev.events],
+    }));
+  }
+
+  function removeFile(id: string) {
+    const file = board.files.find((item) => item.id === id);
+    if (!file) return;
+    setBoard((prev) => ({
+      ...prev,
+      files: prev.files.filter((item) => item.id !== id),
+      events: [newEvent(file.clientSlug, `Anexo removido: ${file.fileName}`), ...prev.events],
+    }));
+  }
+
+  async function downloadFile(file: ClientFile) {
+    if (!supabase) return;
+    const signed = await supabase.storage.from("client-files").createSignedUrl(file.storagePath, 60);
+    if (signed.error || !signed.data) {
+      setSyncMessage(signed.error?.message ?? "Não abri o arquivo.");
+      return;
+    }
+    window.open(signed.data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function refreshRemote() {
+    const result = await loadRemote();
+    if (!result.board || !result.access) {
+      setSyncMessage(result.error || "Não foi possível ler a ficha.");
+      return;
+    }
+    skipSave.current = true;
+    pushedAt.current = Date.now();
+    setAccess(result.access);
+    setBoard(result.board);
+  }
+
+  async function manageUser(body: { action: "create" | "role" | "delete"; email?: string; password?: string; role?: Role; userId?: string }) {
+    if (!supabase) return;
+    const { data, error } = await supabase.functions.invoke("create-user", { body });
+    const payload = data as { ok?: boolean; message?: string } | null;
+    if (error || !payload?.ok) {
+      setSyncMessage(payload?.message || error?.message || "Não foi possível alterar o usuário. Publique a função create-user.");
+      return;
+    }
+    await refreshRemote();
+  }
+
+  async function toggleGrant(userId: string, clientSlug: string, granted: boolean) {
+    if (!supabase) return;
+    const result = granted
+      ? await supabase.from("client_grants").insert({ user_id: userId, client_slug: clientSlug })
+      : await supabase.from("client_grants").delete().eq("user_id", userId).eq("client_slug", clientSlug);
+    if (result.error) {
+      setSyncMessage(result.error.message);
+      return;
+    }
+    await refreshRemote();
+  }
+
   function removeDate(id: string) {
     const date = board.dates.find((item) => item.id === id);
     if (!date) return;
@@ -299,15 +417,28 @@ export function App() {
     return (
       <div className="app">
         <p className={syncMessage ? "warn login" : "login hint"}>{syncMessage || "Carregando a ficha…"}</p>
+        {syncMessage ? (
+          <button type="button" className="choice" data-testid="sign-out" onClick={() => { if (supabase) void supabase.auth.signOut(); }}>
+            Sair
+          </button>
+        ) : null}
       </div>
     );
   }
+
+  const banner = !supabase
+    ? "Esta cópia fica só neste navegador. Para os dois sócios verem a mesma ficha, faltam as chaves do Supabase da Central."
+    : access?.role === "vendedor"
+      ? `Ligado como ${sessionEmail ?? ""}. Você vê e edita só as lojas autorizadas.`
+      : access?.role === "socio"
+        ? `Ligado como ${sessionEmail ?? ""}. Você vê todas as lojas.`
+        : `Ligado como ${sessionEmail ?? ""}. Esta conta ainda não tem nível.`;
 
   return (
     <div className="app">
       <header className="top">
         <div>
-          <p className="eyebrow">Sócios</p>
+          <p className="eyebrow">{access?.role === "vendedor" ? "Vendedor" : access?.role === "socio" ? "Sócio" : "Sócios"}</p>
           <h1>Central de clientes</h1>
         </div>
         <nav className="nav" aria-label="Seções">
@@ -317,31 +448,52 @@ export function App() {
           <button type="button" className={view === "agenda" ? "choice on" : "choice"} data-testid="nav-agenda" onClick={() => setView("agenda")}>
             Agenda
           </button>
+          {access?.role === "socio" ? (
+            <button type="button" className={view === "permissoes" ? "choice on" : "choice"} data-testid="nav-permissoes" onClick={() => setView("permissoes")}>
+              Permissões
+            </button>
+          ) : null}
+          {access?.role === "socio" ? (
+            <button type="button" className={view === "usuarios" ? "choice on" : "choice"} data-testid="nav-usuarios" onClick={() => setView("usuarios")}>
+              Usuários
+            </button>
+          ) : null}
           {supabase ? (
             <button type="button" className="choice" data-testid="sign-out" onClick={() => { if (supabase) void supabase.auth.signOut(); }}>
               Sair
             </button>
           ) : null}
         </nav>
-        <p className="banner">
-          {supabase
-            ? `Ligado à Central${sessionEmail ? ` como ${sessionEmail}` : ""}. Os dois sócios veem a mesma ficha.`
-            : "Esta cópia fica só neste navegador. Para os dois sócios verem a mesma ficha, faltam as chaves do Supabase da Central."}
-        </p>
+        <p className="banner">{banner}</p>
         {syncMessage ? <p className="warn">{syncMessage}</p> : null}
       </header>
 
       {view === "agenda" ? (
-        <Agenda clients={board.clients} dates={board.dates} onSave={saveDate} onToggle={toggleDate} onRemove={removeDate} />
+        <Agenda clients={allowed} dates={agendaDates} onSave={saveDate} onToggle={toggleDate} onRemove={removeDate} />
+      ) : view === "usuarios" && access?.role === "socio" ? (
+        <Users
+          profiles={access.profiles}
+          selfId={access.userId}
+          onCreate={(input) => void manageUser({ action: "create", ...input })}
+          onRole={(userId, role) => void manageUser({ action: "role", userId, role })}
+          onDelete={(userId) => void manageUser({ action: "delete", userId })}
+        />
+      ) : view === "permissoes" && access?.role === "socio" ? (
+        <Permissions
+          sellers={access.profiles.filter((profile) => profile.role === "vendedor")}
+          clients={allowed}
+          grants={access.grants}
+          onToggle={(userId, clientSlug, granted) => void toggleGrant(userId, clientSlug, granted)}
+        />
       ) : (
         <>
           <div className="filters" role="toolbar" aria-label="Filtrar por status">
-            <FilterChip active={filter === "todos"} label={`Todos ${board.clients.length}`} onClick={() => setFilter("todos")} />
+            <FilterChip active={filter === "todos"} label={`Todos ${allowed.length}`} onClick={() => setFilter("todos")} />
             {STATUSES.map((status) => (
               <FilterChip
                 key={status}
                 active={filter === status}
-                label={`${STATUS_LABEL[status]} ${board.clients.filter((client) => client.status === status).length}`}
+                label={`${STATUS_LABEL[status]} ${allowed.filter((client) => client.status === status).length}`}
                 onClick={() => setFilter(status)}
               />
             ))}
@@ -381,9 +533,17 @@ export function App() {
                   <Dossier
                     client={current}
                     history={history}
+                    contacts={contacts}
+                    files={files}
+                    remote={supabase !== null}
                     onPatch={patchClient}
                     onStatus={setStatus}
                     onCheck={toggleCheck}
+                    onAddContact={addContact}
+                    onRemoveContact={removeContact}
+                    onAddFile={(file) => void addFile(file)}
+                    onRemoveFile={removeFile}
+                    onDownloadFile={(file) => void downloadFile(file)}
                     deployMessage={deployMessage}
                     packageState={packageState}
                     onPackage={(client) => void packageClient(client)}

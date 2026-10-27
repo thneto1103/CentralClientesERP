@@ -280,7 +280,8 @@ h3 { font-size: 1.05rem; margin: 22px 0 8px; }
 .check.done { background: #f3f6f1; }
 
 .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.history li { display: grid; grid-template-columns: 118px 1fr; gap: 10px; }
+.history li { display: grid; grid-template-columns: 118px 1fr; gap: 10px; align-items: center; }
+.history li .choice { margin-right: 8px; }
 .back { display: none; justify-self: start; }
 
 .chip:active, .choice:active, .check:active, .card:active, .back:active {

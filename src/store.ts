@@ -1,5 +1,5 @@
 import { SEED } from "./seed";
-import { EMPTY_SECRETS, type BoardState, type CalendarDate, type ClientRecord, type ClientSecrets, type EnvSnapshot, type HistoryEvent } from "./types";
+import { EMPTY_SECRETS, type BoardState, type CalendarDate, type ClientContact, type ClientRecord, type ClientSecrets, type EnvSnapshot, type HistoryEvent } from "./types";
 
 const loadedEnv = import.meta.glob("./private-env.ts", {
   eager: true,
@@ -84,6 +84,20 @@ function applyEnv(client: ClientRecord): ClientRecord {
   };
 }
 
+function completeEvent(event: HistoryEvent): HistoryEvent {
+  return { ...event, actorEmail: event.actorEmail ?? "" };
+}
+
+function boardFrom(clients: ClientRecord[], saved: Partial<BoardState>): BoardState {
+  return {
+    clients,
+    events: (saved.events ?? []).map(completeEvent),
+    dates: (saved.dates ?? []).filter((date) => date.day && date.clientSlug),
+    contacts: (saved.contacts ?? []).filter((contact) => contact.clientSlug && contact.name),
+    files: (saved.files ?? []).filter((file) => file.clientSlug && file.storagePath),
+  };
+}
+
 export function withSeed(saved: BoardState): BoardState {
   const bySlug = new Map(saved.clients.map((client) => [client.slug, client]));
   const clients = cloneSeed().map((seed) => {
@@ -96,20 +110,21 @@ export function withSeed(saved: BoardState): BoardState {
   for (const extra of saved.clients) {
     if (!clients.some((client) => client.slug === extra.slug)) clients.push(applyEnv(complete(extra)));
   }
-  return {
-    clients,
-    events: saved.events ?? [],
-    dates: (saved.dates ?? []).filter((date) => date.day && date.clientSlug),
-  };
+  return boardFrom(clients, saved);
+}
+
+export function hydrateRemote(saved: BoardState): BoardState {
+  return boardFrom(saved.clients.map((client) => applyEnv(complete(client))), saved);
 }
 
 export function loadBoard(): BoardState {
+  const empty = boardFrom(cloneSeed().map(applyEnv), {});
   const raw = localStorage.getItem(KEY);
-  if (!raw) return { clients: cloneSeed().map(applyEnv), events: [], dates: [] };
+  if (!raw) return empty;
   try {
     return withSeed(JSON.parse(raw) as BoardState);
   } catch {
-    return { clients: cloneSeed().map(applyEnv), events: [], dates: [] };
+    return empty;
   }
 }
 
@@ -127,5 +142,10 @@ export function newEvent(slug: string, text: string): HistoryEvent {
     at: new Date().toISOString(),
     slug,
     text,
+    actorEmail: "",
   };
+}
+
+export function newContact(input: Omit<ClientContact, "id">): ClientContact {
+  return { ...input, id: crypto.randomUUID() };
 }

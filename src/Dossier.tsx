@@ -6,6 +6,8 @@ import {
   STATUS_HINT,
   STATUS_LABEL,
   type CheckKey,
+  type ClientContact,
+  type ClientFile,
   type ClientRecord,
   type HistoryEvent,
   type ProjectStatus,
@@ -25,9 +27,17 @@ function formatWhen(iso: string): string {
 export function Dossier({
   client,
   history,
+  contacts,
+  files,
+  remote,
   onPatch,
   onStatus,
   onCheck,
+  onAddContact,
+  onRemoveContact,
+  onAddFile,
+  onRemoveFile,
+  onDownloadFile,
   deployMessage,
   packageState,
   onPackage,
@@ -36,9 +46,17 @@ export function Dossier({
 }: {
   client: ClientRecord;
   history: HistoryEvent[];
+  contacts: ClientContact[];
+  files: ClientFile[];
+  remote: boolean;
   onPatch: (slug: string, patch: Partial<ClientRecord>, label: string) => void;
   onStatus: (slug: string, status: ProjectStatus) => void;
   onCheck: (slug: string, key: CheckKey) => void;
+  onAddContact: (contact: Omit<ClientContact, "id" | "clientSlug">) => void;
+  onRemoveContact: (id: string) => void;
+  onAddFile: (file: File) => void;
+  onRemoveFile: (id: string) => void;
+  onDownloadFile: (file: ClientFile) => void;
   deployMessage: string;
   packageState: { zipExists: boolean; exeExists: boolean };
   onPackage: (client: ClientRecord) => void;
@@ -275,6 +293,9 @@ export function Dossier({
         ))}
       </ul>
 
+      <Contacts contacts={contacts} onAdd={onAddContact} onRemove={onRemoveContact} />
+      <Files remote={remote} files={files} onAdd={onAddFile} onRemove={onRemoveFile} onDownload={onDownloadFile} />
+
       <h3>Histórico</h3>
       {history.length === 0 ? (
         <p className="empty">Nenhuma mudança ainda.</p>
@@ -285,11 +306,118 @@ export function Dossier({
               <time className="nums" dateTime={event.at}>
                 {formatWhen(event.at)}
               </time>
-              <span>{event.text}</span>
+              <span>
+                {event.text}
+                {event.actorEmail ? ` · ${event.actorEmail}` : ""}
+              </span>
             </li>
           ))}
         </ol>
       )}
+    </>
+  );
+}
+
+function Contacts({
+  contacts,
+  onAdd,
+  onRemove,
+}: {
+  contacts: ClientContact[];
+  onAdd: (contact: Omit<ClientContact, "id" | "clientSlug">) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [roleLabel, setRoleLabel] = useState("");
+  return (
+    <>
+      <h3>Contatos da loja</h3>
+      {contacts.length === 0 ? <p className="empty">Nenhum contato.</p> : null}
+      <ul className="checks">
+        {contacts.map((contact) => (
+          <li key={contact.id}>
+            <span>{contact.name}{contact.roleLabel ? ` · ${contact.roleLabel}` : ""}{contact.phone ? ` · ${contact.phone}` : ""}</span>
+            <button type="button" className="choice" onClick={() => onRemove(contact.id)}>
+              Remover
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="date-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!name.trim()) return;
+          onAdd({ name: name.trim(), phone: phone.trim(), roleLabel: roleLabel.trim() });
+          setName("");
+          setPhone("");
+          setRoleLabel("");
+        }}
+      >
+        <label className="field">
+          Nome
+          <input data-testid="contact-name" value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <label className="field">
+          Telefone
+          <input data-testid="contact-phone" value={phone} onChange={(event) => setPhone(event.target.value)} />
+        </label>
+        <label className="field">
+          Função
+          <input data-testid="contact-role" value={roleLabel} onChange={(event) => setRoleLabel(event.target.value)} />
+        </label>
+        <button type="submit" className="choice" data-testid="add-contact">
+          Adicionar contato
+        </button>
+      </form>
+    </>
+  );
+}
+
+function Files({
+  remote,
+  files,
+  onAdd,
+  onRemove,
+  onDownload,
+}: {
+  remote: boolean;
+  files: ClientFile[];
+  onAdd: (file: File) => void;
+  onRemove: (id: string) => void;
+  onDownload: (file: ClientFile) => void;
+}) {
+  return (
+    <>
+      <h3>Anexos</h3>
+      {remote ? null : <p className="hint">Contrato e certificado A1 ficam no armazenamento da Central.</p>}
+      <ul className="checks">
+        {files.map((file) => (
+          <li key={file.id}>
+            <button type="button" className="choice" onClick={() => onDownload(file)}>
+              {file.fileName}
+            </button>
+            <button type="button" className="choice" onClick={() => onRemove(file.id)}>
+              Remover
+            </button>
+          </li>
+        ))}
+      </ul>
+      {remote ? (
+        <label className="field">
+          Enviar arquivo
+          <input
+            data-testid="file-upload"
+            type="file"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) onAdd(file);
+            }}
+          />
+        </label>
+      ) : null}
     </>
   );
 }
